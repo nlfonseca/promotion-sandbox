@@ -99,3 +99,4 @@ See [TESTING.md](TESTING.md): one scenario per section, "do this, expect this".
 - `Input required and not supplied: app-id` or `Bad credentials` in a run: the `PROMOTE_APP_ID` variable or the `PROMOTE_APP_PRIVATE_KEY` secret is missing or wrong, or the App is not installed on the repo. Redo Setup step 1.
 - Fast-forward refused: the base has commits the head lacks. Open backflow merge PRs in the direction `master → beta → develop`; `hotfix-backflow` does this automatically for hotfixes.
 - On a brand-new company repo where `master` already diverged and nothing depends on it yet: `git push --force origin develop:beta develop:master` once, with the ruleset temporarily off. Never after go-live.
+Hello from feature 1

@@ -105,3 +105,4 @@ See [TESTING.md](TESTING.md): one scenario per section, "do this, expect this".
 - On a brand-new company repo where `master` already diverged and nothing depends on it yet: `git push --force origin develop:beta develop:master` once, with the ruleset temporarily off. Never after go-live.
 Hello from feature 1.
 Hello from feature 2
+Hello from feature 3

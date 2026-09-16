@@ -59,7 +59,8 @@ gh pr create --base develop --fill && gh pr merge --squash --delete-branch
 **Expect**
 
 - "Merge" is disabled: required check `promotion-gate` failing, review required.
-- Nothing you click can squash or merge-commit into `beta`.
+- Only "Create a merge commit" is offered on `beta`/`master`; squash and rebase are hidden by the ruleset.
+- As @nlfonseca (repo admin, the bypass actor) you also see a "bypass rules" checkbox. That is the same bypass the token uses; leave it alone.
 
 ---
 
@@ -147,17 +148,17 @@ The push to `beta` in step 4 also opens a new **Release: beta → master** (beta
 
 **Do**
 
-1. Edit `.github/branch-protection/promotion-branch.json`: set `"users": []`.
+1. Edit `.github/rulesets/promotion-branches.json`: set `"bypass_actors": []`.
 2. Run `./scripts/configure-repo.sh` (do not commit the edit).
 3. Create a promotion (Tests 1 + 5).
 
 **Expect**
 
-- `promote` run fails at the **Push** step: `protected branch hook declined` / required reviews.
+- `promote` run fails at the **Push** step with `GH013: Repository rule violations ... Changes must be made through a pull request`.
 - The PR gets a "❌ ... push was rejected ..." comment and the `promote` label is removed.
-- Restore `"users": ["BYPASS_USER"]`, re-run the script, re-add `promote`: the push goes through.
+- Restore the bypass actor, re-run the script, re-add `promote`: the push goes through.
 
-This is the exact thing to ask infra for on the company repo: the GitHub App in the bypass list of `beta` and `master`.
+This is the exact thing to ask infra for on the company repo: the GitHub App as a bypass actor on the `beta`/`master` ruleset.
 
 ---
 

@@ -1,13 +1,11 @@
 #!/usr/bin/env bash
-# Idempotent repo configuration: default branch, merge methods, labels, branch
-# protection. Run it again after editing the JSON under .github/branch-protection.
+# Idempotent repo configuration: default branch, merge methods, labels, rulesets.
+# Run it again after editing the JSON under .github/rulesets.
 #   ./scripts/configure-repo.sh [owner/repo]
-# BYPASS_USER = the account that owns PROMOTE_TOKEN (gets the bypass-PR allowance).
 set -euo pipefail
 REPO=${1:-nlfonseca/promotion-sandbox}
-BYPASS_USER=${BYPASS_USER:-nlfonseca}
 here=$(cd "$(dirname "$0")" && pwd)
-protection="$here/../.github/branch-protection"
+rulesets="$here/../.github/rulesets"
 
 echo "→ default branch + merge methods (squash for features, merge commit for backflow, no rebase)"
 gh repo edit "$REPO" --default-branch develop \
@@ -19,11 +17,18 @@ label promotion 0E8A16 "Auto-opened promotion PR (fast-forward only)"
 label promote   5319E7 "Fast-forward this promotion now"
 label backflow  FBCA04 "Hotfix backflow: merge with a merge commit"
 
-echo "→ branch protection"
-for branch in beta master; do
-  sed "s/BYPASS_USER/$BYPASS_USER/" "$protection/promotion-branch.json" \
-    | gh api -X PUT "repos/$REPO/branches/$branch/protection" --input - >/dev/null
-  echo "  $branch (PR + 1 code-owner approval + promotion-gate, admins enforced, bypass-PR: $BYPASS_USER)"
-done
-gh api -X PUT "repos/$REPO/branches/develop/protection" --input "$protection/develop.json" >/dev/null
-echo "  develop (PR required, no approvals, no bypass entry)"
+echo "→ rulesets"
+apply_ruleset() {
+  local file=$1 name id
+  name=$(jq -r .name "$file")
+  id=$(gh api "repos/$REPO/rulesets" --jq ".[] | select(.name == \"$name\") | .id")
+  if [ -n "$id" ]; then
+    gh api -X PUT "repos/$REPO/rulesets/$id" --input "$file" >/dev/null
+    echo "  $name (updated #$id)"
+  else
+    id=$(gh api -X POST "repos/$REPO/rulesets" --input "$file" --jq .id)
+    echo "  $name (created #$id)"
+  fi
+}
+apply_ruleset "$rulesets/promotion-branches.json"
+apply_ruleset "$rulesets/develop.json"

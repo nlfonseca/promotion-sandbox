@@ -48,7 +48,7 @@ Every push and PR creation uses the `PROMOTE_TOKEN` secret, never `GITHUB_TOKEN`
 
 ## Setup
 
-Done by `scripts/configure-repo.sh`: default branch, merge methods (squash and merge commit, no rebase), labels `promotion`, `promote`, `backflow`, branch protection. Also done: public repo, three branches at one commit, baseline tag `v0.0.0`, collaborator invite for @fabioop.
+Done by `scripts/configure-repo.sh`: default branch, merge methods (squash and merge commit, no rebase), labels `promotion`, `promote`, `backflow`, rulesets. Also done: public repo, three branches at one commit, baseline tag `v0.0.0`, collaborator invite for @fabioop.
 
 Still manual:
 
@@ -63,10 +63,14 @@ Still manual:
 
 ### Branch protection as configured
 
-- `beta`, `master`: PR required, 1 approval, code-owner review, stale approvals dismissed, required check `promotion-gate`, admins included, bypass-PR allowance for @nlfonseca (the PAT identity). Required checks still apply to that direct push, which is why the fast-forwarded SHA must carry a green `promotion-gate`.
-- `develop`: PR required, no approvals, no bypass entry, admins not enforced.
+Rulesets, defined in `.github/rulesets/` and applied by the script:
 
-To prove the bypass is what makes the push work: set `"users": []` in `.github/branch-protection/promotion-branch.json`, re-run the script, re-add `promote` on a promotion PR, watch the push get rejected, then restore and re-run.
+- `promotion-branches` (`beta`, `master`): PR required, 1 approval, code-owner review, stale approvals dismissed, only "Create a merge commit" offered by the button (that is for backflows), required check `promotion-gate`, no force-push, no deletion. One bypass actor: the **Repository admin** role, mode "always". That is the identity behind `PROMOTE_TOKEN`; personal repos cannot list individual users, and on the company repo this entry becomes the GitHub App (`"actor_type": "Integration"`). Everyone else, code owners included, cannot push to these branches.
+- `develop`: PR required, no approvals, squash or merge commit, no bypass actors, no force-push.
+
+Because the bypass actor skips the rules on a direct push, the `promote` workflow is what guarantees green checks: it refuses to push until every check on the head commit has passed.
+
+To prove the bypass entry is what lets the token push: set `"bypass_actors": []` in `.github/rulesets/promotion-branches.json`, re-run the script, re-add `promote` on a promotion PR, watch the push get rejected, then restore and re-run.
 
 ## Test plan
 

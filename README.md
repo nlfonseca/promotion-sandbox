@@ -19,7 +19,7 @@ Prototype of fast-forward release promotion: `develop → beta → master` with 
 3. Add the `promote` label. The `promote` workflow waits for green checks, fast-forwards `beta`, comments on the PR, and the PR closes itself.
 4. The push to `beta` opens **Release: beta → master**. Same steps. The push to `master` publishes the release.
 
-The merge button is intentionally useless on `beta` and `master`. The required `promotion-gate` check is red until the `promote` label is on, and by then the fast-forward has already landed.
+The merge button is intentionally useless on `beta` and `master`. The required `promotion-gate` check is red until the `promote` label is on, and `promote` itself is a required check too, so the button stays disabled while the executor runs and stays blocked if it fails. When it succeeds there is nothing left to merge.
 
 ## Hotfixes
 
@@ -84,7 +84,7 @@ Idempotent. It reads `PROMOTE_APP_ID` and makes the App the only bypass actor on
 
 Rulesets, defined in `.github/rulesets/` and applied by the script:
 
-- `promotion-branches` (`beta`, `master`): PR required, 1 approval, code-owner review, stale approvals dismissed, only "Create a merge commit" offered by the button (that is for backflows), required check `promotion-gate`, no force-push, no deletion. One bypass actor: the GitHub App (`actor_type: Integration`), mode "always". Everyone else, admins and code owners included, cannot push to these branches.
+- `promotion-branches` (`beta`, `master`): PR required, 1 approval, code-owner review, stale approvals dismissed, only "Create a merge commit" offered by the button (that is for backflows), required checks `promotion-gate` and `promote`, no force-push, no deletion. One bypass actor: the GitHub App (`actor_type: Integration`), mode "always". Everyone else, admins and code owners included, cannot push to these branches.
 - `develop`: PR required, no approvals, squash or merge commit, no bypass actors, no force-push.
 
 Because the bypass actor skips the rules on a direct push, the `promote` workflow is what guarantees green checks: it refuses to push until every check on the head commit has passed.

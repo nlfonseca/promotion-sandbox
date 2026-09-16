@@ -84,6 +84,7 @@ gh pr create --base develop --fill && gh pr merge --squash --delete-branch
 
 **Expect**
 
+- While the `promote` run is in progress the merge box says "Some checks haven't completed yet" and the button is disabled (`promote` is a required check).
 - `promote` run: guards pass, waits for checks, `git merge --ff-only`, push.
 - The PR gets a comment "✅ Fast-forwarded `beta` to <sha>" and closes itself (state "Closed", not "Merged": there was nothing to merge).
 - `git rev-parse origin/develop origin/beta` prints the same SHA.

@@ -40,6 +40,9 @@
         "required_status_checks": [
           {
             "context": "promotion-gate"
+          },
+          {
+            "context": "promote"
           }
         ]
       }

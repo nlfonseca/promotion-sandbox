@@ -59,7 +59,8 @@ Still manual:
    ```
 
 2. **Collaborator.** @fabioop accepts the invitation. The role must be Write: a read-only reviewer's approval does not satisfy a required review.
-3. Optional: connect Vercel to see previews follow the branch pointers.
+3. **First run.** Workflows only register in the Actions tab after a single-branch push to `develop` (the bootstrap pushed three branches atomically, which GitHub ignores). Once the secret is set, re-run the last failed `open-promotion-pr` run, or just start [TESTING.md](TESTING.md) Test 1, and the first promotion PR opens.
+4. Optional: connect Vercel to see previews follow the branch pointers.
 
 ### Branch protection as configured
 

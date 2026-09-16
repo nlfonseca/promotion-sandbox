@@ -1,0 +1,34 @@
+# Required status check on beta and master. It fails unless the PR carries the
+# `promote` label (or is a hotfix backflow master → beta), so the merge button
+# stays blocked and nobody can squash or merge-commit into a promotion branch.
+name: promotion-gate
+
+on:
+  pull_request:
+    types: [opened, reopened, synchronize, labeled, unlabeled]
+    branches: [beta, master]
+
+permissions: {}
+
+jobs:
+  promotion-gate:
+    runs-on: ubuntu-latest
+    env:
+      LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
+      HEAD_BRANCH: ${{ github.event.pull_request.head.ref }}
+      HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+      BASE_BRANCH: ${{ github.event.pull_request.base.ref }}
+    steps:
+      - name: Check gate
+        run: |
+          case ",$LABELS," in
+            *,promote,*)
+              echo "'promote' label present: the promote workflow fast-forwards $BASE_BRANCH."
+              exit 0 ;;
+          esac
+          if [ "$HEAD_REPO" = "$GITHUB_REPOSITORY" ] && [ "$HEAD_BRANCH" = master ] && [ "$BASE_BRANCH" = beta ]; then
+            echo "Hotfix backflow master → beta: merge it with 'Create a merge commit'."
+            exit 0
+          fi
+          echo "::error::PRs into $BASE_BRANCH are promoted by fast-forward, never merged. Get a code-owner approval, then add the 'promote' label."
+          exit 1

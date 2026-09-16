@@ -1,0 +1,37 @@
+# Drift detector: master must be an ancestor of beta, and beta of develop.
+# Runs on every promotion push and once a day. It is red by design while a
+# hotfix is being flowed back; merging the open backflow PRs makes it green.
+name: sync-check
+
+on:
+  push:
+    branches: [beta, master]
+  schedule:
+    - cron: '0 8 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  sync-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Verify ancestry
+        run: |
+          git fetch origin develop beta master
+          ok=true
+          check() {
+            if git merge-base --is-ancestor "origin/$1" "origin/$2"; then
+              echo "✓ $1 ($(git rev-parse --short "origin/$1")) is contained in $2 ($(git rev-parse --short "origin/$2"))"
+            else
+              echo "::error::$1 has commits that $2 does not: the branches have drifted. If a hotfix is in flight, merge the open backflow PRs; otherwise see README → Recovery."
+              ok=false
+            fi
+          }
+          check master beta
+          check beta develop
+          $ok

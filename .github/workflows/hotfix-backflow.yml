@@ -1,0 +1,49 @@
+# When a commit lands on master that develop does not contain (a hotfix), open
+# the backflow PRs so the fix reaches every branch through a real merge:
+#   push to master not contained in develop → PR master → beta
+#   that PR merged                          → PR beta → develop
+# These are normal merge commits, the one place they are allowed. Cherry-picks
+# would not restore sync: the copied commit has a different hash.
+name: hotfix-backflow
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    types: [closed]
+    branches: [beta]
+
+permissions:
+  contents: read
+
+env:
+  GH_TOKEN: ${{ secrets.PROMOTE_TOKEN }}
+
+jobs:
+  master-to-beta:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Open backflow PR master → beta
+        run: |
+          git fetch origin develop
+          if git merge-base --is-ancestor "$GITHUB_SHA" origin/develop; then
+            echo "develop already contains $GITHUB_SHA: this was a promotion, no backflow needed."
+            exit 0
+          fi
+          .github/scripts/open-backflow-pr.sh master beta
+
+  beta-to-develop:
+    if: >-
+      github.event_name == 'pull_request' && github.event.pull_request.merged == true
+        && github.event.pull_request.head.ref == 'master'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: beta
+      - name: Open backflow PR beta → develop
+        run: .github/scripts/open-backflow-pr.sh beta develop

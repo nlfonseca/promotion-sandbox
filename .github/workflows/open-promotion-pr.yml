@@ -1,0 +1,79 @@
+# Opens (or refreshes) the promotion PR for the branch that was just pushed:
+#   push to develop -> PR develop → beta
+#   push to beta    -> PR beta → master
+# The PR stays open and accumulates commits until someone promotes it.
+name: open-promotion-pr
+
+on:
+  push:
+    branches: [develop, beta]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: open-promotion-pr-${{ github.ref_name }}
+  cancel-in-progress: false
+
+env:
+  # Single token source. On the company repo, replace with the output of
+  # actions/create-github-app-token. Never use GITHUB_TOKEN here: PRs it opens
+  # do not trigger other workflows, so the chain would stop silently.
+  GH_TOKEN: ${{ secrets.PROMOTE_TOKEN }}
+
+jobs:
+  open-pr:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Resolve promotion target
+        run: |
+          case "$GITHUB_REF_NAME" in
+            develop) base=beta ;;
+            beta)    base=master ;;
+            *) echo "::error::No promotion target for $GITHUB_REF_NAME"; exit 1 ;;
+          esac
+          echo "HEAD_BRANCH=$GITHUB_REF_NAME" >> "$GITHUB_ENV"
+          echo "BASE_BRANCH=$base" >> "$GITHUB_ENV"
+
+      - name: Open or refresh the promotion PR
+        run: |
+          git fetch origin "$BASE_BRANCH"
+          if git merge-base --is-ancestor "origin/$HEAD_BRANCH" "origin/$BASE_BRANCH"; then
+            echo "$BASE_BRANCH already contains $HEAD_BRANCH — nothing to promote."
+            exit 0
+          fi
+          if [ -z "$GH_TOKEN" ]; then
+            echo "::error::Secret PROMOTE_TOKEN is not set (see README → Setup)."
+            exit 1
+          fi
+
+          count=$(git rev-list --count "origin/$BASE_BRANCH..origin/$HEAD_BRANCH")
+          {
+            echo "Fast-forwards \`$BASE_BRANCH\` to \`$HEAD_BRANCH\`. No merge commit is created: \`$BASE_BRANCH\` will point at the same SHA as \`$HEAD_BRANCH\`."
+            echo
+            echo "### $count commit(s) ahead of \`$BASE_BRANCH\`"
+            git log --no-merges --format='- %h %s' "origin/$BASE_BRANCH..origin/$HEAD_BRANCH"
+            echo
+            echo "### How to promote"
+            echo "1. A code owner approves this PR."
+            echo "2. Someone adds the \`promote\` label."
+            echo "3. The \`promote\` workflow fast-forwards \`$BASE_BRANCH\` and this PR closes itself."
+            echo
+            echo "**Do not use the merge button.** The \`promotion-gate\` check blocks it on purpose."
+            echo
+            echo "_This description is regenerated on every push to \`$HEAD_BRANCH\`._"
+          } > body.md
+
+          existing=$(gh pr list -R "$GITHUB_REPOSITORY" --base "$BASE_BRANCH" --head "$HEAD_BRANCH" \
+            --state open --json number --jq '.[0].number // empty')
+          if [ -n "$existing" ]; then
+            gh pr edit "$existing" -R "$GITHUB_REPOSITORY" --body-file body.md
+            echo "Refreshed PR #$existing ($HEAD_BRANCH → $BASE_BRANCH)."
+          else
+            gh pr create -R "$GITHUB_REPOSITORY" --base "$BASE_BRANCH" --head "$HEAD_BRANCH" \
+              --title "Release: $HEAD_BRANCH → $BASE_BRANCH" --body-file body.md --label promotion
+          fi

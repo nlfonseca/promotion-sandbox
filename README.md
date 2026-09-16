@@ -104,3 +104,4 @@ See [TESTING.md](TESTING.md): one scenario per section, "do this, expect this".
 - Fast-forward refused: the base has commits the head lacks. Open backflow merge PRs in the direction `master → beta → develop`; `hotfix-backflow` does this automatically for hotfixes.
 - On a brand-new company repo where `master` already diverged and nothing depends on it yet: `git push --force origin develop:beta develop:master` once, with the ruleset temporarily off. Never after go-live.
 Hello from feature 1.
+Hello from feature 2

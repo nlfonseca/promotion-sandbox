@@ -16,9 +16,6 @@ on:
 permissions:
   contents: read
 
-env:
-  GH_TOKEN: ${{ secrets.PROMOTE_TOKEN }}
-
 jobs:
   master-to-beta:
     if: github.event_name == 'push'
@@ -27,14 +24,30 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - name: Open backflow PR master → beta
+
+      - name: Is this a hotfix?
+        id: hotfix
         run: |
           git fetch origin develop
           if git merge-base --is-ancestor "$GITHUB_SHA" origin/develop; then
             echo "develop already contains $GITHUB_SHA: this was a promotion, no backflow needed."
-            exit 0
+          else
+            echo "yes=true" >> "$GITHUB_OUTPUT"
           fi
-          .github/scripts/open-backflow-pr.sh master beta
+
+      - name: Mint promotion token
+        if: steps.hotfix.outputs.yes == 'true'
+        id: token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ vars.PROMOTE_APP_ID }}
+          private-key: ${{ secrets.PROMOTE_APP_PRIVATE_KEY }}
+
+      - name: Open backflow PR master → beta
+        if: steps.hotfix.outputs.yes == 'true'
+        env:
+          GH_TOKEN: ${{ steps.token.outputs.token }}
+        run: .github/scripts/open-backflow-pr.sh master beta
 
   beta-to-develop:
     if: >-
@@ -45,5 +58,15 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: beta
+
+      - name: Mint promotion token
+        id: token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ vars.PROMOTE_APP_ID }}
+          private-key: ${{ secrets.PROMOTE_APP_PRIVATE_KEY }}
+
       - name: Open backflow PR beta → develop
+        env:
+          GH_TOKEN: ${{ steps.token.outputs.token }}
         run: .github/scripts/open-backflow-pr.sh beta develop

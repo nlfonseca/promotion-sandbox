@@ -12,9 +12,6 @@ on:
 permissions:
   contents: read
 
-env:
-  GH_TOKEN: ${{ secrets.PROMOTE_TOKEN }}
-
 jobs:
   release:
     runs-on: ubuntu-latest
@@ -75,14 +72,19 @@ jobs:
           { echo "## $version ($bump bump from ${last:-nothing})"; echo; cat notes.md; } >> "$GITHUB_STEP_SUMMARY"
           echo "Releasing $version ($bump bump from ${last:-nothing})"; cat notes.md
 
+      - name: Mint promotion token
+        if: steps.version.outputs.skip != 'true'
+        id: token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ vars.PROMOTE_APP_ID }}
+          private-key: ${{ secrets.PROMOTE_APP_PRIVATE_KEY }}
+
       - name: Create tag and GitHub Release
         if: steps.version.outputs.skip != 'true'
         env:
+          GH_TOKEN: ${{ steps.token.outputs.token }}
           VERSION: ${{ steps.version.outputs.version }}
         run: |
-          if [ -z "$GH_TOKEN" ]; then
-            echo "::error::Secret PROMOTE_TOKEN is not set (see README → Setup)."
-            exit 1
-          fi
           gh release create "$VERSION" -R "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
             --title "$VERSION" --notes-file notes.md

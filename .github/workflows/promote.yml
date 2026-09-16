@@ -29,9 +29,6 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  # Single token source. On the company repo, replace with the output of
-  # actions/create-github-app-token. Never GITHUB_TOKEN (see README).
-  GH_TOKEN: ${{ secrets.PROMOTE_TOKEN }}
   PR_NUMBER: ${{ inputs.pr || github.event.pull_request.number }}
 
 jobs:
@@ -43,13 +40,20 @@ jobs:
         && contains(fromJSON('["beta","master"]'), github.event.pull_request.base.ref))
     runs-on: ubuntu-latest
     steps:
+      # Short-lived GitHub App installation token; the App is the only identity
+      # allowed to push to beta/master (ruleset bypass actor). Never GITHUB_TOKEN.
+      - name: Mint promotion token
+        id: token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ vars.PROMOTE_APP_ID }}
+          private-key: ${{ secrets.PROMOTE_APP_PRIVATE_KEY }}
+
       - name: Check guards
         id: guard
+        env:
+          GH_TOKEN: ${{ steps.token.outputs.token }}
         run: |
-          if [ -z "$GH_TOKEN" ]; then
-            echo "::error::Secret PROMOTE_TOKEN is not set (see README → Setup)."
-            exit 1
-          fi
           gh pr view "$PR_NUMBER" -R "$GITHUB_REPOSITORY" \
             --json number,state,isCrossRepository,baseRefName,headRefName,headRefOid,labels,reviewDecision > pr.json
           base=$(jq -r .baseRefName pr.json)
@@ -78,6 +82,7 @@ jobs:
       - name: Wait for checks on the head commit
         if: steps.guard.outputs.go == 'true'
         env:
+          GH_TOKEN: ${{ steps.token.outputs.token }}
           SHA: ${{ steps.guard.outputs.sha }}
         run: |
           sleep 20   # let checks triggered by the same event get queued
@@ -102,7 +107,7 @@ jobs:
         if: steps.guard.outputs.go == 'true'
         with:
           ref: ${{ steps.guard.outputs.base }}
-          token: ${{ secrets.PROMOTE_TOKEN }}
+          token: ${{ steps.token.outputs.token }}
           fetch-depth: 0
 
       - name: Fast-forward
@@ -127,6 +132,7 @@ jobs:
       - name: Report on the PR
         if: always() && steps.guard.outputs.go == 'true'
         env:
+          GH_TOKEN: ${{ steps.token.outputs.token }}
           BASE_BRANCH: ${{ steps.guard.outputs.base }}
           HEAD_BRANCH: ${{ steps.guard.outputs.head }}
           SHA: ${{ steps.guard.outputs.sha }}
@@ -144,7 +150,7 @@ jobs:
           if [ "$FF" = failure ]; then
             msg="❌ Cannot fast-forward \`$BASE_BRANCH\` to \`$HEAD_BRANCH\`: \`$BASE_BRANCH\` has commits that \`$HEAD_BRANCH\` does not, so something landed directly on \`$BASE_BRANCH\`. Flow it back first with merge PRs (\`master → beta → develop\`, see README → Hotfixes), then re-add the \`promote\` label."
           elif [ "$PUSH" = failure ]; then
-            msg="❌ Fast-forward computed but the push to \`$BASE_BRANCH\` was rejected. Check that the PROMOTE_TOKEN identity is in the branch-protection bypass list and that required checks are green on $SHA. Re-add the \`promote\` label to retry."
+            msg="❌ Fast-forward computed but the push to \`$BASE_BRANCH\` was rejected. Check that the GitHub App is the bypass actor on the \`promotion-branches\` ruleset and that required checks are green on $SHA. Re-add the \`promote\` label to retry."
           else
             msg="❌ Promotion did not complete (checks not green, or timed out). Re-add the \`promote\` label to retry."
           fi

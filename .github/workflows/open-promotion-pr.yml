@@ -15,12 +15,6 @@ concurrency:
   group: open-promotion-pr-${{ github.ref_name }}
   cancel-in-progress: false
 
-env:
-  # Single token source. On the company repo, replace with the output of
-  # actions/create-github-app-token. Never use GITHUB_TOKEN here: PRs it opens
-  # do not trigger other workflows, so the chain would stop silently.
-  GH_TOKEN: ${{ secrets.PROMOTE_TOKEN }}
-
 jobs:
   open-pr:
     runs-on: ubuntu-latest
@@ -30,6 +24,7 @@ jobs:
           fetch-depth: 0
 
       - name: Resolve promotion target
+        id: target
         run: |
           case "$GITHUB_REF_NAME" in
             develop) base=beta ;;
@@ -38,19 +33,28 @@ jobs:
           esac
           echo "HEAD_BRANCH=$GITHUB_REF_NAME" >> "$GITHUB_ENV"
           echo "BASE_BRANCH=$base" >> "$GITHUB_ENV"
+          git fetch origin "$base"
+          if git merge-base --is-ancestor "origin/$GITHUB_REF_NAME" "origin/$base"; then
+            echo "$base already contains $GITHUB_REF_NAME: nothing to promote."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      # The token is a short-lived GitHub App installation token, never
+      # GITHUB_TOKEN: events caused by GITHUB_TOKEN do not trigger workflows,
+      # so the promotion chain would stop silently after the first step.
+      - name: Mint promotion token
+        if: steps.target.outputs.skip != 'true'
+        id: token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ vars.PROMOTE_APP_ID }}
+          private-key: ${{ secrets.PROMOTE_APP_PRIVATE_KEY }}
 
       - name: Open or refresh the promotion PR
+        if: steps.target.outputs.skip != 'true'
+        env:
+          GH_TOKEN: ${{ steps.token.outputs.token }}
         run: |
-          git fetch origin "$BASE_BRANCH"
-          if git merge-base --is-ancestor "origin/$HEAD_BRANCH" "origin/$BASE_BRANCH"; then
-            echo "$BASE_BRANCH already contains $HEAD_BRANCH — nothing to promote."
-            exit 0
-          fi
-          if [ -z "$GH_TOKEN" ]; then
-            echo "::error::Secret PROMOTE_TOKEN is not set (see README → Setup)."
-            exit 1
-          fi
-
           count=$(git rev-list --count "origin/$BASE_BRANCH..origin/$HEAD_BRANCH")
           {
             echo "Fast-forwards \`$BASE_BRANCH\` to \`$HEAD_BRANCH\`. No merge commit is created: \`$BASE_BRANCH\` will point at the same SHA as \`$HEAD_BRANCH\`."

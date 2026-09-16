@@ -1,6 +1,6 @@
 # Promotion sandbox
 
-Prototype of fast-forward release promotion: `develop → beta → master` with no cherry-picks and no merge commits, so every branch holds the same SHAs. Promoting is one label click on a PR that opens itself.
+Prototype of fast-forward release promotion: `develop → beta → master` with no cherry-picks and no merge commits, so every branch holds the same SHAs. Promoting is one label click on a PR that opens itself. All automation acts as a GitHub App, never as a person.
 
 ## Branch model
 
@@ -14,8 +14,8 @@ Prototype of fast-forward release promotion: `develop → beta → master` with 
 
 ## Promoting
 
-1. Push to `develop`. The `open-promotion-pr` workflow opens **Release: develop → beta**, or refreshes it if it is already open. The body lists the commits waiting.
-2. A code owner (@nlfonseca or @fabioop) approves. The PR is authored by the token owner, and nobody can approve their own PR, so in this sandbox @fabioop approves.
+1. Push to `develop`. The `open-promotion-pr` workflow opens **Release: develop → beta** as the App's bot user, or refreshes it if it is already open. The body lists the commits waiting.
+2. A code owner (@nlfonseca or @fabioop) approves. The PR is authored by the bot, so any code owner can approve it, including you.
 3. Add the `promote` label. The `promote` workflow waits for green checks, fast-forwards `beta`, comments on the PR, and the PR closes itself.
 4. The push to `beta` opens **Release: beta → master**. Same steps. The push to `master` publishes the release.
 
@@ -42,36 +42,52 @@ Never cherry-pick a hotfix back. The copy has a different hash, `develop` never 
 | `hotfix-backflow.yml` | push to `master` not in `develop`; backflow PR merged | opens the backflow merge PRs |
 | `sync-check.yml` | push to `beta`, `master`; daily | fails if `master ⊄ beta` or `beta ⊄ develop` |
 
-Every push and PR creation uses the `PROMOTE_TOKEN` secret, never `GITHUB_TOKEN`. Events caused by `GITHUB_TOKEN` do not trigger workflows, so the chain would stop silently after the first step. On the company repo, swap the secret for a GitHub App token from `actions/create-github-app-token`. It is one `env` line per workflow.
+Every push and PR creation uses a short-lived token minted from the GitHub App by `actions/create-github-app-token`, never `GITHUB_TOKEN`: events caused by `GITHUB_TOKEN` do not trigger workflows, so the chain would stop silently after the first step. The App is only an identity with permissions. The logic lives in the workflows, and the identity does not die when a person leaves the team. Each workflow mints the token in one step named "Mint promotion token" and hands it to the steps that push or open PRs.
 
 `promote.yml` runs on `pull_request_target`, so `beta` and `master` execute their own copy of it. Changes to it take effect on a branch once they are promoted there.
 
 ## Setup
 
-Done by `scripts/configure-repo.sh`: default branch, merge methods (squash and merge commit, no rebase), labels `promotion`, `promote`, `backflow`, rulesets. Also done: public repo, three branches at one commit, baseline tag `v0.0.0`, collaborator invite for @fabioop.
+### 1. GitHub App (one time, in the browser)
 
-Still manual:
+Sandbox: <https://github.com/settings/apps/new> under your account. Company repo: the same form under the organisation's settings, done by infra. Everything below is identical.
 
-1. **Token.** Create a fine-grained PAT at <https://github.com/settings/personal-access-tokens/new>, repository access limited to this repo, permissions: Contents read/write, Pull requests read/write, Issues read/write (labels and comments), Workflows read/write (promotions push commits that touch `.github/workflows`), Checks read. Then store it:
+- **Name:** globally unique, e.g. `promotion-sandbox-bot`. **Homepage URL:** this repo. **Webhook:** untick *Active*.
+- **Repository permissions:** Contents *Read and write*, Pull requests *Read and write*, Issues *Read and write* (labels and comments), Workflows *Read and write* (promotions push commits that touch `.github/workflows`), Checks *Read-only*. Metadata read is added automatically.
+- **Where can this App be installed:** *Only on this account*.
+- Create it, then on its General page note the numeric **App ID** and click **Generate a private key** (downloads a `.pem`).
+- Left menu **Install App** → your account → *Only select repositories* → `promotion-sandbox`.
 
-   ```bash
-   gh secret set PROMOTE_TOKEN -R nlfonseca/promotion-sandbox
-   ```
+Store the two values:
 
-2. **Collaborator.** @fabioop accepts the invitation. The role must be Write: a read-only reviewer's approval does not satisfy a required review.
-3. **First run.** Workflows only register in the Actions tab after a single-branch push to `develop` (the bootstrap pushed three branches atomically, which GitHub ignores). Once the secret is set, re-run the last failed `open-promotion-pr` run, or just start [TESTING.md](TESTING.md) Test 1, and the first promotion PR opens.
-4. Optional: connect Vercel to see previews follow the branch pointers.
+```bash
+gh variable set PROMOTE_APP_ID -R nlfonseca/promotion-sandbox --body "<app id>"
+```
+
+```bash
+gh secret set PROMOTE_APP_PRIVATE_KEY -R nlfonseca/promotion-sandbox < ~/Downloads/<name>.private-key.pem
+```
+
+### 2. Rulesets, labels, merge methods
+
+```bash
+./scripts/configure-repo.sh
+```
+
+Idempotent. It reads `PROMOTE_APP_ID` and makes the App the only bypass actor on `beta`/`master`. `BYPASS=admin` is the bootstrap fallback before the App exists. `BYPASS=none` is used by Test 9.
+
+### 3. Collaborators
+
+@fabioop has the Write role, which a code-owner approval requires. Since the bot authors the promotion PRs, you can approve them yourself; a second owner is optional.
 
 ### Branch protection as configured
 
 Rulesets, defined in `.github/rulesets/` and applied by the script:
 
-- `promotion-branches` (`beta`, `master`): PR required, 1 approval, code-owner review, stale approvals dismissed, only "Create a merge commit" offered by the button (that is for backflows), required check `promotion-gate`, no force-push, no deletion. One bypass actor: the **Repository admin** role, mode "always". That is the identity behind `PROMOTE_TOKEN`; personal repos cannot list individual users, and on the company repo this entry becomes the GitHub App (`"actor_type": "Integration"`). Everyone else, code owners included, cannot push to these branches.
+- `promotion-branches` (`beta`, `master`): PR required, 1 approval, code-owner review, stale approvals dismissed, only "Create a merge commit" offered by the button (that is for backflows), required check `promotion-gate`, no force-push, no deletion. One bypass actor: the GitHub App (`actor_type: Integration`), mode "always". Everyone else, admins and code owners included, cannot push to these branches.
 - `develop`: PR required, no approvals, squash or merge commit, no bypass actors, no force-push.
 
 Because the bypass actor skips the rules on a direct push, the `promote` workflow is what guarantees green checks: it refuses to push until every check on the head commit has passed.
-
-To prove the bypass entry is what lets the token push: set `"bypass_actors": []` in `.github/rulesets/promotion-branches.json`, re-run the script, re-add `promote` on a promotion PR, watch the push get rejected, then restore and re-run.
 
 ## Test plan
 
@@ -80,5 +96,6 @@ See [TESTING.md](TESTING.md): one scenario per section, "do this, expect this".
 ## Recovery
 
 - Label added but nothing happened: open the `promote` run in Actions. Remove and re-add `promote` to retry, or run `promote` manually with the PR number (Actions → promote → Run workflow).
+- `Input required and not supplied: app-id` or `Bad credentials` in a run: the `PROMOTE_APP_ID` variable or the `PROMOTE_APP_PRIVATE_KEY` secret is missing or wrong, or the App is not installed on the repo. Redo Setup step 1.
 - Fast-forward refused: the base has commits the head lacks. Open backflow merge PRs in the direction `master → beta → develop`; `hotfix-backflow` does this automatically for hotfixes.
-- On a brand-new company repo where `master` already diverged and nothing depends on it yet: `git push --force origin develop:beta develop:master` once, with protection temporarily off. Never after go-live.
+- On a brand-new company repo where `master` already diverged and nothing depends on it yet: `git push --force origin develop:beta develop:master` once, with the ruleset temporarily off. Never after go-live.

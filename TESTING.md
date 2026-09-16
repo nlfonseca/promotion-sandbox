@@ -4,9 +4,8 @@ Each test is "do this, then expect this". Run them in order the first time. Ever
 
 **Before you start**
 
-- [ ] `PROMOTE_TOKEN` secret is set (see README → Setup).
-- [ ] @fabioop accepted the collaborator invite.
-- [ ] Have two browser sessions ready: @nlfonseca adds labels, @fabioop approves. Nobody can approve their own PR, and the promotion PRs are authored by the token owner.
+- [ ] The GitHub App exists and is installed on the repo, `PROMOTE_APP_ID` and `PROMOTE_APP_PRIVATE_KEY` are stored, and `./scripts/configure-repo.sh` has been run (README → Setup).
+- [ ] You are a code owner. The promotion PRs are authored by the App's bot user, so you can approve them yourself. @fabioop (Write role) can play the second reviewer.
 
 Handy commands (run from a clone):
 
@@ -36,7 +35,7 @@ gh pr create --base develop --fill && gh pr merge --squash --delete-branch
 **Expect**
 
 - Actions → `open-promotion-pr` run is green.
-- A PR **Release: develop → beta** exists with label `promotion`, listing `feat: add hello line`.
+- A PR **Release: develop → beta** exists, authored by the bot, with label `promotion`, listing `feat: add hello line`.
 - Actions → `promotion-gate` run on that PR is **red** (no `promote` label yet). That is correct.
 
 ---
@@ -60,13 +59,13 @@ gh pr create --base develop --fill && gh pr merge --squash --delete-branch
 
 - "Merge" is disabled: required check `promotion-gate` failing, review required.
 - Only "Create a merge commit" is offered on `beta`/`master`; squash and rebase are hidden by the ruleset.
-- As @nlfonseca (repo admin, the bypass actor) you also see a "bypass rules" checkbox. That is the same bypass the token uses; leave it alone.
+- No "bypass rules" checkbox for anyone: the App is the only bypass actor.
 
 ---
 
 ## Test 4: the label alone is not enough
 
-**Do** as @nlfonseca, add the `promote` label **before** any approval.
+**Do** add the `promote` label **before** any approval.
 
 **Expect**
 
@@ -80,8 +79,8 @@ gh pr create --base develop --fill && gh pr merge --squash --delete-branch
 
 **Do**
 
-1. As @fabioop: Files changed → Review → **Approve**.
-2. As @nlfonseca: add the `promote` label.
+1. As a code owner: Files changed → Review → **Approve**.
+2. Add the `promote` label.
 
 **Expect**
 
@@ -95,11 +94,11 @@ gh pr create --base develop --fill && gh pr merge --squash --delete-branch
 
 ## Test 6: the chain continues to master
 
-**Do** nothing. This is what the token setup is for.
+**Do** nothing. This is what the App token is for.
 
 **Expect**
 
-- The push to `beta` (made by the token, not by `GITHUB_TOKEN`) opened **Release: beta → master** on its own.
+- The push to `beta` (made by the App, not by `GITHUB_TOKEN`) opened **Release: beta → master** on its own.
 - If it did not open, the push was made with the wrong token. See README → Workflows.
 
 ---
@@ -111,9 +110,9 @@ gh pr create --base develop --fill && gh pr merge --squash --delete-branch
 **Expect**
 
 - `master` now points at the same SHA as `beta` and `develop`.
-- `release` run is green; Releases page shows **v0.1.0** (a `feat:` bumps minor from the baseline `v0.0.0`).
+- `release` run is green; the Releases page shows a new tag with the minor number bumped (a `feat:` bumps minor from the previous tag, e.g. `v0.0.1 → v0.1.0`).
 - Notes are grouped: Features (`feat: add hello line`), Fixes (`fix: typo...`), plus a compare link.
-- A `fix:`-only promotion later gives `v0.1.1`; a `feat!:` or `BREAKING CHANGE` gives `v1.0.0`.
+- A `fix:`-only promotion later bumps patch; a `feat!:` or `BREAKING CHANGE` bumps major.
 
 ---
 
@@ -128,14 +127,14 @@ git commit -am "fix: urgent production fix" && git push -u origin hotfix/urgent
 gh pr create --base master --title "fix: urgent production fix" --body "hotfix"
 ```
 
-Then approve (@fabioop) and add `promote` (@nlfonseca), like Test 5.
+Then approve and add `promote`, like Test 5.
 
 **Expect, in order**
 
-1. `master` fast-forwards to the hotfix commit; release **v0.1.1** is published.
+1. `master` fast-forwards to the hotfix commit; a patch release is published.
 2. `sync-check` goes **red** (`master` has a commit `beta` lacks). Expected: this is the alarm.
 3. `hotfix-backflow` opens **Hotfix backflow: master → beta** with label `backflow`. `promotion-gate` is green for it (backflow is the one allowed merge).
-4. @fabioop approves; merge it with **Create a merge commit** (not squash).
+4. Approve; merge it with **Create a merge commit** (the only option offered).
 5. **Hotfix backflow: beta → develop** opens by itself. Merge it, again with a merge commit.
 6. `sync-check` (re-run it manually: Actions → sync-check → Run workflow) is green again.
 7. `git log --oneline --graph origin/develop -5` shows the hotfix and one merge commit per backflow step, same hashes on all three branches.
@@ -144,19 +143,18 @@ The push to `beta` in step 4 also opens a new **Release: beta → master** (beta
 
 ---
 
-## Test 9: the bypass entry is what lets the token push
+## Test 9: the bypass entry is what lets the App push
 
 **Do**
 
-1. Edit `.github/rulesets/promotion-branches.json`: set `"bypass_actors": []`.
-2. Run `./scripts/configure-repo.sh` (do not commit the edit).
-3. Create a promotion (Tests 1 + 5).
+1. Remove the bypass actor: `BYPASS=none ./scripts/configure-repo.sh`
+2. Create a promotion (Tests 1 + 5).
 
 **Expect**
 
 - `promote` run fails at the **Push** step with `GH013: Repository rule violations ... Changes must be made through a pull request`.
 - The PR gets a "❌ ... push was rejected ..." comment and the `promote` label is removed.
-- Restore the bypass actor, re-run the script, re-add `promote`: the push goes through.
+- Restore with `./scripts/configure-repo.sh`, re-add `promote`: the push goes through.
 
 This is the exact thing to ask infra for on the company repo: the GitHub App as a bypass actor on the `beta`/`master` ruleset.
 

@@ -7,7 +7,7 @@ head=$1
 base=$2
 
 if [ -z "${GH_TOKEN:-}" ]; then
-  echo "::error::Secret PROMOTE_TOKEN is not set (see README → Setup)."
+  echo "::error::No GH_TOKEN: the GitHub App token was not minted (see README → Setup)."
   exit 1
 fi
 

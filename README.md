@@ -95,7 +95,11 @@ See [TESTING.md](TESTING.md): one scenario per section, "do this, expect this".
 
 ## Recovery
 
-- Label added but nothing happened: open the `promote` run in Actions. Remove and re-add `promote` to retry, or run `promote` manually with the PR number (Actions → promote → Run workflow).
+- Label added but nothing happened: open the `promote` run in Actions. Remove and re-add `promote` to retry, or run `promote` manually with the PR number (Actions → promote → Run workflow). A manual run needs the code-owner approval but not the label, and it executes the copy of `promote.yml` from the branch you pick, so a fix to the workflow itself can be applied by running it from `develop`:
+
+  ```bash
+  gh workflow run promote.yml -R nlfonseca/promotion-sandbox --ref develop -f pr=<number>
+  ```
 - `Input required and not supplied: app-id` or `Bad credentials` in a run: the `PROMOTE_APP_ID` variable or the `PROMOTE_APP_PRIVATE_KEY` secret is missing or wrong, or the App is not installed on the repo. Redo Setup step 1.
 - Fast-forward refused: the base has commits the head lacks. Open backflow merge PRs in the direction `master → beta → develop`; `hotfix-backflow` does this automatically for hotfixes.
 - On a brand-new company repo where `master` already diverged and nothing depends on it yet: `git push --force origin develop:beta develop:master` once, with the ruleset temporarily off. Never after go-live.

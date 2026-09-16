@@ -162,9 +162,13 @@ This is the exact thing to ask infra for on the company repo: the GitHub App as 
 
 ## Test 10: manual recovery
 
-**Do** Actions → `promote` → Run workflow → enter the PR number.
+**Do** Actions → `promote` → Run workflow → pick the branch whose copy of the workflow should run (normally `develop`) → enter the PR number. Or:
 
-**Expect** the same guards as the label path. It is the escape hatch if a label event was missed.
+```bash
+gh workflow run promote.yml -R nlfonseca/promotion-sandbox --ref develop -f pr=<number>
+```
+
+**Expect** the same guards as the label path except the label itself: the PR must be open, approved by a code owner, and its checks green. It is the escape hatch if a label event was missed, and the way to promote a fix to `promote.yml` itself, because the label path runs the base branch's copy of the workflow.
 
 ---
 

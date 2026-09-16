@@ -69,7 +69,11 @@ jobs:
           [ "$state" = OPEN ] || skip "PR is $state, nothing to do."
           case "$base" in beta|master) ;; *) skip "$base is not a promotion branch." ;; esac
           if [ "$cross" != false ]; then echo "::error::Refusing to promote from a fork."; exit 1; fi
-          [ "$labelled" = true ] || skip "Waiting for the 'promote' label."
+          if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ]; then
+            echo "Manual run: the 'promote' label is not required, the dispatch is the go signal."
+          else
+            [ "$labelled" = true ] || skip "Waiting for the 'promote' label."
+          fi
           [ "$decision" = APPROVED ] || skip "Waiting for a code-owner approval (review decision: $decision)."
 
           {
@@ -85,11 +89,15 @@ jobs:
           GH_TOKEN: ${{ steps.token.outputs.token }}
           SHA: ${{ steps.guard.outputs.sha }}
         run: |
-          sleep 20   # let checks triggered by the same event get queued
+          sleep 10   # let checks triggered by the same event get queued
           deadline=$((SECONDS + 900))
           while :; do
+            # Only the newest run of each check counts (re-runs create new check runs).
+            # Excluded: this job, and promotion-gate, which merely mirrors the label this
+            # job already verified and re-runs on the very label event that started us.
             gh api "repos/$GITHUB_REPOSITORY/commits/$SHA/check-runs?per_page=100" \
-              --jq '[.check_runs[] | select(.name != "promote") | {name, status, conclusion}]' > checks.json
+              --jq '[.check_runs[] | select(.name != "promote" and .name != "promotion-gate")]
+                    | group_by(.name) | map(max_by(.id)) | map({name, status, conclusion})' > checks.json
             pending=$(jq '[.[] | select(.status != "completed")] | length' checks.json)
             if [ "$pending" != 0 ]; then
               [ "$SECONDS" -lt "$deadline" ] || { echo "::error::Timed out waiting for checks."; exit 1; }

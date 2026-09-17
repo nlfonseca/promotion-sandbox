@@ -1,1 +1,1 @@
-Hello from feature 4
+Hello from feature 4.

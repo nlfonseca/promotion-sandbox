@@ -87,10 +87,12 @@ Idempotent. It reads `PROMOTE_APP_ID` and makes the App the only bypass actor on
 Rulesets, defined in `.github/rulesets/` and applied by the script:
 
 - `promotion-branches` (`beta`, `master`): PR required, 1 approval, code-owner review, stale approvals dismissed, required checks `promotion-gate` and `promote`, no force-push, no deletion.
-- `develop`: PR required, no approvals, **squash only**, required check `promotion-gate` (green for ordinary PRs, red for `backflow/*`), no force-push.
+- `develop`: PR required, no approvals, **squash only**, required check `promotion-gate` (green for ordinary PRs, red for `backflow/*`, `beta` and `master` heads), no force-push.
 - One bypass actor on both: the GitHub App (`actor_type: Integration`), mode "always". Everyone else, admins and code owners included, cannot push to these branches.
 
 Because the bypass actor skips the rules on a direct push, the `promote` workflow is what guarantees quality. It reads the required checks from the base branch's ruleset, ignores `promotion-gate` and `promote`, and refuses to push until the newest run of each remaining check (for example the CI job) is green on the head commit. Drift alarms such as `sync-check` are not quality gates and never block it. Set `REQUIRED_CHECKS` in `promote.yml` to override the list.
+
+Approval works the same way. Where the ruleset requires a review (`beta`, `master`), the executor trusts GitHub's review decision, which includes the code-owner rule. Where it does not (this sandbox's `develop`), GitHub reports no decision at all, so the executor counts the reviews itself: at least one approval from someone with write access, given on the current head commit, and nobody requesting changes. If a backflow branch is rebuilt after you approved it, approve again.
 
 ## Test plan
 

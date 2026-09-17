@@ -1,6 +1,7 @@
 # Required status check that keeps the merge button blocked on every PR that must
-# land by fast-forward: all PRs into beta and master, and backflow/* PRs into
-# develop. It is red on purpose and never turns green for them. Those PRs are
+# land by fast-forward: all PRs into beta and master, and PRs into develop whose
+# head is backflow/*, beta or master (squashing those would copy a hotfix under a
+# new hash). It is red on purpose and never turns green for them. Those PRs are
 # landed by the promote workflow (approve + `promote` label), whose GitHub App
 # identity bypasses the ruleset. Ordinary PRs into develop pass and get squash-merged.
 name: promotion-gate
@@ -24,6 +25,9 @@ jobs:
           if [ "$BASE_BRANCH" = develop ]; then
             case "$HEAD_BRANCH" in
               backflow/*) ;;
+              beta|master)
+                echo "::error::$HEAD_BRANCH cannot be squashed into develop: the hotfix would get a new hash and the branches would never re-sync. Run the hotfix-backflow workflow; it opens the PR from a backflow/* branch that fast-forwards."
+                exit 1 ;;
               *) echo "Ordinary PR into develop: squash-merge it."; exit 0 ;;
             esac
           fi

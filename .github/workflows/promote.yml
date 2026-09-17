@@ -70,7 +70,7 @@ jobs:
           sha=$(jq -r .headRefOid pr.json)
           state=$(jq -r .state pr.json)
           cross=$(jq -r .isCrossRepository pr.json)
-          decision=$(jq -r .reviewDecision pr.json)
+          decision=$(jq -r '.reviewDecision // ""' pr.json)
           labelled=$(jq -r '[.labels[].name] | index("promote") != null' pr.json)
           echo "PR #$PR_NUMBER: $head ($sha) → $base | state=$state promote-label=$labelled review=$decision"
 
@@ -91,7 +91,24 @@ jobs:
           else
             [ "$labelled" = true ] || skip "Waiting for the 'promote' label."
           fi
-          [ "$decision" = APPROVED ] || skip "Waiting for a code-owner approval (review decision: $decision)."
+          if [ -z "$decision" ]; then
+            # The base branch has no review rule, so GitHub reports no decision. Count the
+            # reviews ourselves: newest verdict per person, approval must be on the current
+            # head commit and come from someone with write access.
+            gh api --paginate "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/reviews?per_page=100" \
+              --jq '.[] | select(.state == "APPROVED" or .state == "CHANGES_REQUESTED" or .state == "DISMISSED")
+                        | {user: .user.login, id, state, commit_id, assoc: .author_association}' \
+              | jq -s --arg sha "$sha" 'group_by(.user) | map(max_by(.id)) | {
+                  approved: ([.[] | select(.state == "APPROVED" and .commit_id == $sha
+                                           and (.assoc | IN("OWNER", "MEMBER", "COLLABORATOR")))] | length),
+                  blocked:  ([.[] | select(.state == "CHANGES_REQUESTED")] | length)}' > reviews.json
+            if [ "$(jq .blocked reviews.json)" != 0 ]; then decision=CHANGES_REQUESTED
+            elif [ "$(jq .approved reviews.json)" != 0 ]; then decision=APPROVED
+            else decision=REVIEW_REQUIRED
+            fi
+            echo "No review rule on $base: counted the reviews on $sha → $decision"
+          fi
+          [ "$decision" = APPROVED ] || skip "Waiting for an approval on the current commit (review decision: $decision)."
 
           {
             echo "go=true"

@@ -106,4 +106,3 @@ See [TESTING.md](TESTING.md): one scenario per section, "do this, expect this".
 Hello from feature 1.
 Hello from feature 2
 Hello from feature 3
-Hello from feature 4

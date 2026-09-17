@@ -1,23 +1,28 @@
-# The fast-forward executor. Runs when a promotion PR gets the `promote` label
-# or an approving review, checks the guards, waits for green checks, then
-# fast-forwards the base branch to the PR head. Never rebases, squashes or
-# merges: if a fast-forward is impossible it fails and says why.
+# The fast-forward executor. Every PR that must keep its commit hashes lands
+# through this workflow, never through the merge button:
+#   releases   develop → beta, beta → master
+#   hotfixes   hotfix/* → master
+#   backflows  backflow/* → beta, backflow/* → develop
+# It runs when such a PR gets the `promote` label or an approving review (or by
+# hand), checks the guards, waits for the required CI checks, then fast-forwards
+# the base branch to the PR head. It never rebases, squashes or merges: if a
+# fast-forward is impossible it fails and says why.
 #
-# Runs on pull_request_target so it has the repo's secrets. It never checks
-# out or executes PR code: it only moves a branch pointer to a commit that
-# already exists in this repository (forks are refused).
+# Runs on pull_request_target so it has the repo's secrets. It never checks out
+# or executes PR code: it only moves a branch pointer to a commit that already
+# exists in this repository (forks are refused).
 name: promote
 
 on:
   pull_request_target:
     types: [labeled]
-    branches: [beta, master]
+    branches: [beta, master, develop]
   pull_request_review:
     types: [submitted]
   workflow_dispatch:
     inputs:
       pr:
-        description: Number of the promotion PR to fast-forward
+        description: Number of the PR to fast-forward
         required: true
         type: string
 
@@ -30,18 +35,22 @@ concurrency:
 
 env:
   PR_NUMBER: ${{ inputs.pr || github.event.pull_request.number }}
+  # Optional override: comma-separated names of the CI checks that must be green
+  # on the head commit. Empty = read them from the base branch's ruleset.
+  REQUIRED_CHECKS: ''
 
 jobs:
   promote:
     if: >-
       github.event_name == 'workflow_dispatch' ||
       (github.event_name == 'pull_request_target' && github.event.label.name == 'promote') ||
-      (github.event_name == 'pull_request_review' && github.event.review.state == 'approved'
-        && contains(fromJSON('["beta","master"]'), github.event.pull_request.base.ref))
+      (github.event_name == 'pull_request_review' && github.event.review.state == 'approved' &&
+        (contains(fromJSON('["beta","master"]'), github.event.pull_request.base.ref) ||
+         (github.event.pull_request.base.ref == 'develop' && startsWith(github.event.pull_request.head.ref, 'backflow/'))))
     runs-on: ubuntu-latest
     steps:
       # Short-lived GitHub App installation token; the App is the only identity
-      # allowed to push to beta/master (ruleset bypass actor). Never GITHUB_TOKEN.
+      # allowed to push to the protected branches (ruleset bypass actor). Never GITHUB_TOKEN.
       - name: Mint promotion token
         id: token
         uses: actions/create-github-app-token@v2
@@ -67,7 +76,15 @@ jobs:
 
           skip() { echo "::notice::$1"; echo "go=false" >> "$GITHUB_OUTPUT"; exit 0; }
           [ "$state" = OPEN ] || skip "PR is $state, nothing to do."
-          case "$base" in beta|master) ;; *) skip "$base is not a promotion branch." ;; esac
+          case "$base" in
+            beta|master) ;;
+            develop)
+              case "$head" in
+                backflow/*) ;;
+                *) skip "PRs into develop are squash-merged; only backflow/* branches fast-forward." ;;
+              esac ;;
+            *) skip "$base is not a branch this workflow moves." ;;
+          esac
           if [ "$cross" != false ]; then echo "::error::Refusing to promote from a fork."; exit 1; fi
           if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ]; then
             echo "Manual run: the 'promote' label is not required, the dispatch is the go signal."
@@ -83,32 +100,50 @@ jobs:
             echo "sha=$sha"
           } >> "$GITHUB_OUTPUT"
 
-      - name: Wait for checks on the head commit
+      - name: Wait for the required CI checks on the head commit
         if: steps.guard.outputs.go == 'true'
         env:
           GH_TOKEN: ${{ steps.token.outputs.token }}
           SHA: ${{ steps.guard.outputs.sha }}
+          BASE_BRANCH: ${{ steps.guard.outputs.base }}
         run: |
-          sleep 10   # let checks triggered by the same event get queued
+          # Which checks? The base branch's ruleset is the source of truth, minus this job and
+          # promotion-gate (red by design). Drift alarms and other automation (sync-check,
+          # release, ...) are deliberately not quality gates: sync-check is red on purpose
+          # while a hotfix flows back, and that is exactly when a backflow must be promoted.
+          if [ -n "$REQUIRED_CHECKS" ]; then
+            required=$(printf '%s' "$REQUIRED_CHECKS" | tr ',' '\n' | sed 's/^ *//; s/ *$//')
+          else
+            required=$(gh api "repos/$GITHUB_REPOSITORY/rules/branches/$BASE_BRANCH" --jq '
+              [.[] | select(.type == "required_status_checks") | .parameters.required_status_checks[].context]
+              | unique | map(select(. != "promote" and . != "promotion-gate")) | .[]')
+          fi
+          if [ -z "$required" ]; then
+            echo "No CI checks are required on $BASE_BRANCH: nothing to wait for."
+            exit 0
+          fi
+          echo "Required on $BASE_BRANCH:"; printf '%s\n' "$required" | sed 's/^/  /'
+
           deadline=$((SECONDS + 900))
           while :; do
             # Only the newest run of each check counts (re-runs create new check runs).
-            # Excluded: this job, and promotion-gate, which merely mirrors the label this
-            # job already verified and re-runs on the very label event that started us.
-            gh api "repos/$GITHUB_REPOSITORY/commits/$SHA/check-runs?per_page=100" \
-              --jq '[.check_runs[] | select(.name != "promote" and .name != "promotion-gate")]
-                    | group_by(.name) | map(max_by(.id)) | map({name, status, conclusion})' > checks.json
-            pending=$(jq '[.[] | select(.status != "completed")] | length' checks.json)
-            if [ "$pending" != 0 ]; then
-              [ "$SECONDS" -lt "$deadline" ] || { echo "::error::Timed out waiting for checks."; exit 1; }
-              echo "Waiting for $pending check(s)…"; sleep 15; continue
-            fi
-            failed=$(jq -r '[.[] | select(.conclusion | IN("success","neutral","skipped") | not) | .name] | join(", ")' checks.json)
-            if [ -n "$failed" ]; then
-              echo "::error::Checks not green on $SHA: $failed"; exit 1
-            fi
-            jq -r '.[] | "✓ \(.name): \(.conclusion)"' checks.json
-            break
+            gh api --paginate "repos/$GITHUB_REPOSITORY/commits/$SHA/check-runs?per_page=100" \
+              --jq '.check_runs[] | {name, id, status, conclusion}' \
+              | jq -s 'group_by(.name) | map(max_by(.id)) | map({key: .name, value: .}) | from_entries' > latest.json
+            pending=""; failed=""
+            while IFS= read -r name; do
+              [ -n "$name" ] || continue
+              state=$(jq -r --arg n "$name" 'if has($n) then (if .[$n].status == "completed" then .[$n].conclusion else "pending" end) else "missing" end' latest.json)
+              case "$state" in
+                success|neutral|skipped) echo "✓ $name: $state" ;;
+                pending|missing)         pending="$pending $name($state)" ;;
+                *)                       failed="$failed $name($state)" ;;
+              esac
+            done <<< "$required"
+            if [ -n "$failed" ]; then echo "::error::Required checks not green on $SHA:$failed"; exit 1; fi
+            if [ -z "$pending" ]; then break; fi
+            [ "$SECONDS" -lt "$deadline" ] || { echo "::error::Timed out waiting for:$pending"; exit 1; }
+            echo "Waiting for:$pending"; sleep 15
           done
 
       - uses: actions/checkout@v4
@@ -153,13 +188,13 @@ jobs:
               --body "✅ Fast-forwarded \`$BASE_BRANCH\` to $SHA (\`$HEAD_BRANCH\`). [Run]($RUN_URL)"
             exit 0
           fi
-          # Drop the label so promotion-gate goes red again and the merge button stays blocked.
+          # Drop the label so that re-adding it is a clean retry.
           gh pr edit "$PR_NUMBER" -R "$GITHUB_REPOSITORY" --remove-label promote || true
           if [ "$FF" = failure ]; then
-            msg="❌ Cannot fast-forward \`$BASE_BRANCH\` to \`$HEAD_BRANCH\`: \`$BASE_BRANCH\` has commits that \`$HEAD_BRANCH\` does not, so something landed directly on \`$BASE_BRANCH\`. Flow it back first with merge PRs (\`master → beta → develop\`, see README → Hotfixes), then re-add the \`promote\` label."
+            msg="❌ Cannot fast-forward \`$BASE_BRANCH\` to \`$HEAD_BRANCH\`: \`$BASE_BRANCH\` has commits that \`$HEAD_BRANCH\` does not. For a release PR this means a hotfix is still flowing back: land the open \`backflow\` PR first. For a backflow PR it means \`$BASE_BRANCH\` moved after the branch was built: run the \`hotfix-backflow\` workflow to rebuild it. Then re-add the \`promote\` label."
           elif [ "$PUSH" = failure ]; then
-            msg="❌ Fast-forward computed but the push to \`$BASE_BRANCH\` was rejected. Check that the GitHub App is the bypass actor on the \`promotion-branches\` ruleset and that required checks are green on $SHA. Re-add the \`promote\` label to retry."
+            msg="❌ Fast-forward computed but the push to \`$BASE_BRANCH\` was rejected. Check that the GitHub App is the bypass actor on the ruleset covering \`$BASE_BRANCH\` (\`./scripts/configure-repo.sh\`). Re-add the \`promote\` label to retry."
           else
-            msg="❌ Promotion did not complete (checks not green, or timed out). Re-add the \`promote\` label to retry."
+            msg="❌ Promotion did not complete: a required CI check is not green on $SHA, or it timed out. Re-add the \`promote\` label to retry."
           fi
           gh pr comment "$PR_NUMBER" -R "$GITHUB_REPOSITORY" --body "$msg [Run]($RUN_URL)"

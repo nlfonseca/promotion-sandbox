@@ -36,7 +36,7 @@ gh pr create --base develop --fill && gh pr merge --squash --delete-branch
 
 - Actions → `open-promotion-pr` run is green.
 - A PR **Release: develop → beta** exists, authored by the bot, with label `promotion`, listing `feat: add hello line`.
-- Actions → `promotion-gate` run on that PR is **red** (no `promote` label yet). That is correct.
+- Actions → `promotion-gate` run on that PR is **red**, and it stays red. That is correct: it is the lock on the merge button, not a failure.
 
 ---
 
@@ -57,9 +57,9 @@ gh pr create --base develop --fill && gh pr merge --squash --delete-branch
 
 **Expect**
 
-- "Merge" is disabled: required check `promotion-gate` failing, review required.
-- Only "Create a merge commit" is offered on `beta`/`master`; squash and rebase are hidden by the ruleset.
+- "Merge" is blocked: required check `promotion-gate` failing, review required.
 - No "bypass rules" checkbox for anyone: the App is the only bypass actor.
+- On a feature PR into `develop`, the dropdown offers only **Squash and merge**.
 
 ---
 
@@ -69,8 +69,8 @@ gh pr create --base develop --fill && gh pr merge --squash --delete-branch
 
 **Expect**
 
-- `promotion-gate` re-runs and goes green (label present).
 - `promote` run finishes with a notice "Waiting for a code-owner approval". Nothing moved.
+- `promotion-gate` is still red and the button still blocked.
 - Remove the label again before Test 5, so you see the normal order.
 
 ---
@@ -84,9 +84,9 @@ gh pr create --base develop --fill && gh pr merge --squash --delete-branch
 
 **Expect**
 
-- While the `promote` run is in progress the merge box says "Some checks haven't completed yet" and the button is disabled (`promote` is a required check).
-- `promote` run: guards pass, waits for checks, `git merge --ff-only`, push.
-- The PR gets a comment "✅ Fast-forwarded `beta` to <sha>" and closes itself (state "Closed", not "Merged": there was nothing to merge).
+- The merge button stays blocked the whole time, before, during and after the run.
+- `promote` run: guards pass, waits for the required CI checks (none in this sandbox), `git merge --ff-only`, push.
+- The PR gets a comment "✅ Fast-forwarded `beta` to <sha>" and GitHub closes it as **Merged**.
 - `git rev-parse origin/develop origin/beta` prints the same SHA.
 - `sync-check` run is green.
 - History on `beta` is linear: no merge commit, same hashes as `develop`.
@@ -133,14 +133,16 @@ Then approve and add `promote`, like Test 5.
 **Expect, in order**
 
 1. `master` fast-forwards to the hotfix commit; a patch release is published.
-2. `sync-check` goes **red** (`master` has a commit `beta` lacks). Expected: this is the alarm.
-3. `hotfix-backflow` opens **Hotfix backflow: master → beta** with label `backflow`. `promotion-gate` is green for it (backflow is the one allowed merge).
-4. Approve; merge it with **Create a merge commit** (the only option offered).
-5. **Hotfix backflow: beta → develop** opens by itself. Merge it, again with a merge commit.
-6. `sync-check` (re-run it manually: Actions → sync-check → Run workflow) is green again.
-7. `git log --oneline --graph origin/develop -5` shows the hotfix and one merge commit per backflow step, same hashes on all three branches.
+2. `sync-check` goes **red** (`master` has a commit `beta` lacks). Expected: this is the alarm, and it does not block anything.
+3. `hotfix-backflow` opens **Hotfix backflow: master → beta** from `backflow/master-into-beta`, label `backflow`. Approve, add `promote`: `beta` fast-forwards. If `beta` had nothing of its own, no merge commit is created at all.
+4. **Hotfix backflow: beta → develop** opens from `backflow/beta-into-develop`. If `develop` has newer work, the branch is a merge commit on top of `develop`. Approve, add `promote`: `develop` fast-forwards to it.
+5. `sync-check` (re-run it: Actions → sync-check → Run workflow) is green again.
+6. `git log --oneline --graph origin/develop -6` shows the hotfix with the same hash on all three branches.
+7. The merge button was never used, and never available, at any step.
 
-The push to `beta` in step 4 also opens a new **Release: beta → master** (beta now has the merge commit). Promote it whenever you like; it fast-forwards cleanly.
+While the backflow is pending, the open **Release: develop → beta** PR shows a warning and refuses to fast-forward. It works again after step 4.
+
+Variations worth trying: squash-merge a feature into `develop` between steps 3 and 4 and watch the workflow rebuild `backflow/beta-into-develop` on the new tip; or make the feature touch the same line as the hotfix and follow the manual-resolution commands the failed job prints.
 
 ---
 

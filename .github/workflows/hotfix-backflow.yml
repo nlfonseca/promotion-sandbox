@@ -1,72 +1,43 @@
-# When a commit lands on master that develop does not contain (a hotfix), open
-# the backflow PRs so the fix reaches every branch through a real merge:
-#   push to master not contained in develop → PR master → beta
-#   that PR merged                          → PR beta → develop
-# These are normal merge commits, the one place they are allowed. Cherry-picks
-# would not restore sync: the copied commit has a different hash.
+# Keeps master ⊂ beta ⊂ develop after a hotfix. Whenever a branch has commits the
+# next one lacks (master → beta, beta → develop), it builds a `backflow/*` branch
+# on top of the lagging branch and opens its PR:
+#   - lagging branch has nothing of its own → the branch is just the hotfix commit
+#   - otherwise → a real merge commit whose first parent is the lagging branch
+# Either way the PR lands like every other promotion: approve + `promote` label,
+# fast-forward. No merge button, so it also works where merge commits are disabled.
+# Cherry-picks would not restore sync: the copied commit has a different hash.
 name: hotfix-backflow
 
 on:
   push:
-    branches: [master]
-  pull_request:
-    types: [closed]
-    branches: [beta]
+    branches: [master, beta, develop]
+  workflow_dispatch:
 
 permissions:
   contents: read
 
+concurrency:
+  group: hotfix-backflow
+  cancel-in-progress: false
+
 jobs:
-  master-to-beta:
-    if: github.event_name == 'push'
+  backflow:
     runs-on: ubuntu-latest
     steps:
+      - name: Mint promotion token
+        id: token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ vars.PROMOTE_APP_ID }}
+          private-key: ${{ secrets.PROMOTE_APP_PRIVATE_KEY }}
+
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          token: ${{ steps.token.outputs.token }}
 
-      - name: Is this a hotfix?
-        id: hotfix
-        run: |
-          git fetch origin develop
-          if git merge-base --is-ancestor "$GITHUB_SHA" origin/develop; then
-            echo "develop already contains $GITHUB_SHA: this was a promotion, no backflow needed."
-          else
-            echo "yes=true" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Mint promotion token
-        if: steps.hotfix.outputs.yes == 'true'
-        id: token
-        uses: actions/create-github-app-token@v2
-        with:
-          app-id: ${{ vars.PROMOTE_APP_ID }}
-          private-key: ${{ secrets.PROMOTE_APP_PRIVATE_KEY }}
-
-      - name: Open backflow PR master → beta
-        if: steps.hotfix.outputs.yes == 'true'
+      - name: Build backflow branches and open their PRs
         env:
           GH_TOKEN: ${{ steps.token.outputs.token }}
-        run: .github/scripts/open-backflow-pr.sh master beta
-
-  beta-to-develop:
-    if: >-
-      github.event_name == 'pull_request' && github.event.pull_request.merged == true
-        && github.event.pull_request.head.ref == 'master'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: beta
-
-      - name: Mint promotion token
-        id: token
-        uses: actions/create-github-app-token@v2
-        with:
-          app-id: ${{ vars.PROMOTE_APP_ID }}
-          private-key: ${{ secrets.PROMOTE_APP_PRIVATE_KEY }}
-
-      - name: Open backflow PR beta → develop
-        env:
-          GH_TOKEN: ${{ steps.token.outputs.token }}
-        run: .github/scripts/open-backflow-pr.sh beta develop
+          BOT: ${{ steps.token.outputs.app-slug }}
+        run: .github/scripts/build-backflow.sh master:beta beta:develop

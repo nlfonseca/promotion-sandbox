@@ -1,12 +1,14 @@
-# Required status check on beta and master. It fails unless the PR carries the
-# `promote` label (or is a hotfix backflow master → beta), so the merge button
-# stays blocked and nobody can squash or merge-commit into a promotion branch.
+# Required status check that keeps the merge button blocked on every PR that must
+# land by fast-forward: all PRs into beta and master, and backflow/* PRs into
+# develop. It is red on purpose and never turns green for them. Those PRs are
+# landed by the promote workflow (approve + `promote` label), whose GitHub App
+# identity bypasses the ruleset. Ordinary PRs into develop pass and get squash-merged.
 name: promotion-gate
 
 on:
   pull_request:
-    types: [opened, reopened, synchronize, labeled, unlabeled]
-    branches: [beta, master]
+    types: [opened, reopened, synchronize]
+    branches: [beta, master, develop]
 
 permissions: {}
 
@@ -14,21 +16,16 @@ jobs:
   promotion-gate:
     runs-on: ubuntu-latest
     env:
-      LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
       HEAD_BRANCH: ${{ github.event.pull_request.head.ref }}
-      HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
       BASE_BRANCH: ${{ github.event.pull_request.base.ref }}
     steps:
       - name: Check gate
         run: |
-          case ",$LABELS," in
-            *,promote,*)
-              echo "'promote' label present: the promote workflow fast-forwards $BASE_BRANCH."
-              exit 0 ;;
-          esac
-          if [ "$HEAD_REPO" = "$GITHUB_REPOSITORY" ] && [ "$HEAD_BRANCH" = master ] && [ "$BASE_BRANCH" = beta ]; then
-            echo "Hotfix backflow master → beta: merge it with 'Create a merge commit'."
-            exit 0
+          if [ "$BASE_BRANCH" = develop ]; then
+            case "$HEAD_BRANCH" in
+              backflow/*) ;;
+              *) echo "Ordinary PR into develop: squash-merge it."; exit 0 ;;
+            esac
           fi
-          echo "::error::PRs into $BASE_BRANCH are promoted by fast-forward, never merged. Get a code-owner approval, then add the 'promote' label."
+          echo "::error::This PR lands by fast-forward, never through the merge button. A code owner approves it, then someone adds the 'promote' label and the promote workflow moves $BASE_BRANCH. This check is red on purpose: it is the lock on the merge button."
           exit 1

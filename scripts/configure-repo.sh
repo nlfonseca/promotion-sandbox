@@ -2,7 +2,7 @@
 # Idempotent repo configuration: default branch, merge methods, labels, rulesets.
 #   ./scripts/configure-repo.sh [owner/repo]
 #
-# BYPASS decides who may push straight to beta/master (the promotion identity):
+# BYPASS decides who may push straight to develop/beta/master (the promotion identity):
 #   app   (default) the GitHub App whose id is in repo variable PROMOTE_APP_ID (or env)
 #   admin           the Repository-admin role; bootstrap fallback before the App exists
 #   none            nobody; used by TESTING.md Test 9 to prove the push gets rejected
@@ -12,7 +12,7 @@ BYPASS=${BYPASS:-app}
 here=$(cd "$(dirname "$0")" && pwd)
 rulesets="$here/../.github/rulesets"
 
-echo "→ default branch + merge methods (squash for features, merge commit for backflow, no rebase)"
+echo "→ default branch + merge methods"
 gh repo edit "$REPO" --default-branch develop \
   --enable-squash-merge --enable-merge-commit --enable-rebase-merge=false
 
@@ -36,7 +36,7 @@ case "$BYPASS" in
   *) echo "BYPASS must be app, admin or none" >&2; exit 1 ;;
 esac
 
-echo "→ rulesets (bypass on beta/master: $who)"
+echo "→ rulesets (bypass actor: $who)"
 apply_ruleset() {
   local file=$1 name id
   name=$(jq -r .name "$file")
@@ -49,8 +49,11 @@ apply_ruleset() {
     echo "  $name (created #$id)"
   fi
 }
-tmp=$(mktemp)
-jq --argjson actors "$actors" '.bypass_actors = $actors' "$rulesets/promotion-branches.json" > "$tmp"
-apply_ruleset "$tmp"
-rm -f "$tmp"
-apply_ruleset "$rulesets/develop.json"
+# The same identity bypasses all three branches: it fast-forwards beta/master for
+# releases and hotfixes, and develop for hotfix backflows.
+for file in promotion-branches.json develop.json; do
+  tmp=$(mktemp)
+  jq --argjson actors "$actors" '.bypass_actors = $actors' "$rulesets/$file" > "$tmp"
+  apply_ruleset "$tmp"
+  rm -f "$tmp"
+done

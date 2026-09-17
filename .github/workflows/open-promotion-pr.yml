@@ -59,6 +59,11 @@ jobs:
           {
             echo "Fast-forwards \`$BASE_BRANCH\` to \`$HEAD_BRANCH\`. No merge commit is created: \`$BASE_BRANCH\` will point at the same SHA as \`$HEAD_BRANCH\`."
             echo
+            if ! git merge-base --is-ancestor "origin/$BASE_BRANCH" "origin/$HEAD_BRANCH"; then
+              echo "> [!WARNING]"
+              echo "> \`$BASE_BRANCH\` has commits that \`$HEAD_BRANCH\` lacks: a hotfix is still flowing back. This PR cannot fast-forward until the open \`backflow\` PR lands."
+              echo
+            fi
             echo "### $count commit(s) ahead of \`$BASE_BRANCH\`"
             git log --no-merges --format='- %h %s' "origin/$BASE_BRANCH..origin/$HEAD_BRANCH"
             echo
@@ -67,7 +72,7 @@ jobs:
             echo "2. Someone adds the \`promote\` label."
             echo "3. The \`promote\` workflow fast-forwards \`$BASE_BRANCH\` and this PR closes itself."
             echo
-            echo "**Do not use the merge button.** The \`promotion-gate\` check blocks it on purpose."
+            echo "**The merge button is blocked on purpose**: \`promotion-gate\` is red by design and is not a failure."
             echo
             echo "_This description is regenerated on every push to \`$HEAD_BRANCH\`._"
           } > body.md
